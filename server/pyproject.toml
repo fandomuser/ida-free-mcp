@@ -1,0 +1,30 @@
+[project]
+name = "idamcp-server"
+version = "1.0.0"
+description = "MCP server exposing an IDA Free 9.5 database (via the idamcp bridge plugin) to Claude Code"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "mcp==2.3.0",
+]
+
+[project.scripts]
+idamcp-server = "idamcp_server.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/idamcp_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: requires a running IDA Free instance with the idamcp plugin and the fixture loaded",
+]

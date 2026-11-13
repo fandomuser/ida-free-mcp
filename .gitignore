@@ -1,0 +1,12 @@
+build/
+third_party/
+server/.venv/
+__pycache__/
+.pytest_cache/
+*.obj
+*.pdb
+tests/fixtures/*.exe
+tests/fixtures/*.i64
+tests/fixtures/*.id[0-2]
+tests/fixtures/*.nam
+tests/fixtures/*.til
