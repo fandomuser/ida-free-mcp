@@ -25,7 +25,7 @@ jobs:
         run: ./scripts/build.ps1 -Test
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.3
 
       - name: Python unit tests
         working-directory: server
