@@ -225,8 +225,11 @@ void Transport::serve(std::shared_ptr<Conn> c)
       break;
     }
   }
-  c->close_once();
+  // Mark finished BEFORE closing: once the peer sees EOF, this slot must already be
+  // reclaimable, or a client reconnecting immediately can be refused as "busy".
+  // (Reaping only joins the thread, which waits for this function to return.)
   c->done.store(true);
+  c->close_once();
 }
 
 void Transport::stop()
