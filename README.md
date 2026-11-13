@@ -8,6 +8,10 @@ allows plugins to use a decompiler (see [Decompiler](#decompiler)).
 
 It does not use IDA Pro, IDAPython, idalib, or any license workaround. Nothing in IDA is patched.
 
+> **Disclaimer:** idamcp is an independent project. It is not affiliated with, endorsed by, or
+> supported by Hex-Rays SA. IDA, IDA Free, IDA Pro and Hex-Rays are trademarks of Hex-Rays SA. Use
+> of IDA is governed by its own license; idamcp only uses the public IDA SDK.
+
 ```
 Claude Code ──stdio/MCP──> idamcp-server (Python, official `mcp` SDK)
                                 │  newline-delimited JSON, token auth
