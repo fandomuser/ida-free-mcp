@@ -18,12 +18,14 @@
 static int g_failures = 0;
 static int g_checks = 0;
 
+// Reports file:line only. Stringifying the expression (#cond) breaks older MSVC
+// preprocessors when it contains raw string literals or \u escapes.
 #define CHECK(cond)                                                                 \
   do {                                                                              \
     g_checks++;                                                                     \
     if ( !(cond) ) {                                                                \
       g_failures++;                                                                 \
-      std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);          \
+      std::fprintf(stderr, "FAIL %s:%d\n", __FILE__, __LINE__);                     \
     }                                                                               \
   } while ( 0 )
 

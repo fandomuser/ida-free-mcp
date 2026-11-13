@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Fetch the official IDA SDK 9.5 (MIT, Hex-Rays)
         run: git clone --depth 1 --branch v9.5.0-release https://github.com/HexRaysSA/ida-sdk third_party/ida-sdk
@@ -25,7 +25,7 @@ jobs:
         run: ./scripts/build.ps1 -Test
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10
 
       - name: Python unit tests
         working-directory: server
@@ -41,7 +41,7 @@ jobs:
           Get-Content dist/SHA256SUMS.txt
 
       - name: Keep build as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: idamcp-${{ github.ref_name }}
           path: dist/*
