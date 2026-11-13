@@ -1,0 +1,74 @@
+# Builds idamcp.dll from the tagged commit and publishes it as a GitHub release.
+# Trigger: push a tag like v1.0.0  (git tag v1.0.0 && git push origin v1.0.0)
+# Manual runs (workflow_dispatch) build and test only; the DLL is kept as a workflow artifact.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the release and upload assets
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the official IDA SDK 9.5 (MIT, Hex-Rays)
+        run: git clone --depth 1 --branch v9.5.0-release https://github.com/HexRaysSA/ida-sdk third_party/ida-sdk
+
+      - name: Build plugin and run C++ unit tests
+        shell: pwsh
+        run: ./scripts/build.ps1 -Test
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Python unit tests
+        working-directory: server
+        run: uv run --frozen pytest -m "not live" -q
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/out/plugins/idamcp.dll dist/
+          $h = (Get-FileHash dist/idamcp.dll -Algorithm SHA256).Hash.ToLower()
+          "$h  idamcp.dll" | Out-File -Encoding ascii dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Keep build as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: idamcp-${{ github.ref_name }}
+          path: dist/*
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $notes = @"
+          IDA Free 9.5 MCP bridge plugin, built from $tag by GitHub Actions (official IDA SDK v9.5.0-release, MSVC x64, Release).
+
+          ## Install the plugin
+          1. Close IDA.
+          2. Copy ``idamcp.dll`` to ``%APPDATA%\Hex-Rays\IDA Pro\plugins\``.
+          3. Open a database in IDA Free 9.5 and choose **Edit > Plugins > idamcp** to turn MCP on.
+             The Output window shows ``[idamcp] MCP ENABLED — read/write available``.
+
+          The plugin is only half of the setup: the MCP server (``server/``) runs from the source tree.
+          See the README for registering it with Claude Code or OpenCode, or run ``scripts/install.ps1``,
+          which builds and installs everything.
+
+          Verify the download: ``Get-FileHash idamcp.dll`` must match ``SHA256SUMS.txt``.
+
+          Requirements: Windows x64, IDA Free 9.5 (the DLL is built against the 9.5 SDK; other versions are not supported).
+          "@
+          $notes | Out-File -Encoding utf8 notes.md
+          gh release create $tag dist/idamcp.dll dist/SHA256SUMS.txt --title "idamcp $tag" --notes-file notes.md --verify-tag

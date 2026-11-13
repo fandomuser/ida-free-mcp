@@ -41,6 +41,13 @@ database and destroys it when the database closes.
   git clone --depth 1 --branch v9.5.0-release https://github.com/HexRaysSA/ida-sdk third_party/ida-sdk
   ```
 
+## Download
+
+Prebuilt `idamcp.dll` builds are attached to the repository's GitHub **Releases**, together with a
+`SHA256SUMS.txt`. Each one is built by GitHub Actions from the tagged commit, and the unit tests run first.
+Copy the DLL to `%APPDATA%\Hex-Rays\IDA Pro\plugins\`, then set up the MCP server as described below.
+To publish a new release, push a tag: `git tag v1.0.1 && git push origin v1.0.1`.
+
 ## Install
 
 If IDA is running, the installer moves the locked old DLL aside (to `%LOCALAPPDATA%\idamcp\old`)
