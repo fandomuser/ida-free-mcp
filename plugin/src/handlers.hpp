@@ -35,5 +35,7 @@ struct MethodDef
 const MethodDef *find_method(const std::string &name);
 // All registered methods (for the hello/capabilities response).
 mj::Value describe_methods();
+// True if a Hex-Rays decompiler (local or cloud) is loaded. Main thread only.
+bool decompiler_available();
 
 }  // namespace idamcp

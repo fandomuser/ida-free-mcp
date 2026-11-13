@@ -15,7 +15,7 @@ READ_TOOLS = {
     "ida_get_function", "ida_get_disassembly", "ida_get_bytes", "ida_get_strings", "ida_search_strings",
     "ida_get_imports", "ida_get_exports", "ida_get_entrypoints", "ida_get_xrefs_to", "ida_get_xrefs_from",
     "ida_get_callers", "ida_get_callees", "ida_get_basic_blocks", "ida_get_control_flow_graph",
-    "ida_search_bytes", "ida_get_names", "ida_get_comments",
+    "ida_search_bytes", "ida_get_names", "ida_get_comments", "ida_decompile",
 }
 WRITE_TOOLS = {
     "ida_rename_function", "ida_rename_symbol", "ida_set_comment", "ida_set_function_comment",
@@ -36,6 +36,7 @@ class FakeBridge:
     def __init__(self, instances: list[FakeInstance] | None = None) -> None:
         self.insts = instances or [FakeInstance(1234)]
         self.databases: list[str | None] = []
+        self.timeouts: list[int | None] = []
         self.calls: list[tuple[str, dict[str, Any], bool]] = []
         self.selected_pid: int | None = None
         self.raise_exc: Exception | None = None
@@ -47,6 +48,7 @@ class FakeBridge:
         params = {k: v for k, v in (params or {}).items() if v is not None}
         self.calls.append((method, params, retry))
         self.databases.append(database)
+        self.timeouts.append(timeout_ms)
         if self.raise_exc:
             raise self.raise_exc
         return dict(self.result) if isinstance(self.result, dict) else self.result
@@ -69,11 +71,11 @@ class FakeBridge:
 
 
 @pytest.mark.anyio
-async def test_all_27_tools_registered():
+async def test_all_28_tools_registered():
     async with Client(create_server(FakeBridge()), raise_exceptions=True) as c:
         names = {t.name for t in (await c.list_tools()).tools}
     assert names == READ_TOOLS | WRITE_TOOLS
-    assert len(names) == 27
+    assert len(names) == 28
 
 
 @pytest.mark.anyio
@@ -240,3 +242,16 @@ async def test_write_needs_explicit_database_when_several_open():
         r = await c.call_tool("ida_set_comment", {"address": "0x1000", "comment": "y"})
         assert not r.is_error
     assert [d for d, (m, _, _) in zip(fb.databases, fb.calls) if m == "set_comment"] == ["b.dll", None]
+
+
+@pytest.mark.anyio
+async def test_decompile_uses_long_timeout_and_maps_unavailable():
+    fb = FakeBridge()
+    async with Client(create_server(fb), raise_exceptions=True) as c:
+        r = await c.call_tool("ida_decompile", {"address": "0x140001000"})
+        assert not r.is_error
+        fb.raise_exc = BridgeError("decompiler_unavailable", "IDA Free: interactive only")
+        r = await c.call_tool("ida_decompile", {"address": "0x140001000"})
+    assert fb.calls[0][:2] == ("decompile", {"address": "0x140001000", "max_lines": 1000})
+    assert fb.timeouts[0] == 90_000
+    assert r.is_error and "[decompiler_unavailable]" in r.content[0].text

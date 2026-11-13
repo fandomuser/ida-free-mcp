@@ -22,6 +22,7 @@
 #include <typeinf.hpp>
 #include <ua.hpp>
 #include <xref.hpp>
+#include <hexrays.hpp>  // decompiler API; IDA Free provides it through the cloud decompiler
 
 #include "handlers.hpp"
 #include "version.hpp"
@@ -1368,6 +1369,71 @@ Value h_create_function(Call &c)
   return o;
 }
 
+// -------------------------------------------------------------------------
+// Decompilation through whatever Hex-Rays decompiler IDA has loaded. In IDA
+// Free that is the cloud decompiler (hexcx64/hexcx86/...): the function is
+// sent to Hex-Rays' servers, which the IDA Free EULA (4.2e) allows.
+// -------------------------------------------------------------------------
+Value h_decompile(Call &c)
+{
+  func_t *pfn = p_func(c, "address");
+  const int64_t max_lines = p_int(c, "max_lines", 1000, 1, 10000);
+  if ( !init_hexrays_plugin() )
+    fail("decompiler_unavailable",
+         "no Hex-Rays decompiler accepts plugin requests in this IDA. In IDA Free the cloud decompiler "
+         "works only interactively (F5): Hex-Rays enables its programming API only in IDA Home, IDA "
+         "Educational and IDA Pro. Use disassembly, xrefs and the control-flow graph instead, or ask "
+         "the user to press F5 in IDA.");
+
+  // Bound the decompiler by our own deadline; restore the user's setting afterwards.
+  const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      c.deadline - std::chrono::steady_clock::now()).count();
+  if ( left <= 0 )
+    fail("timeout", "no time left to decompile");
+  const int old_timeout = set_decompiler_timeout(static_cast<int>(std::min<int64_t>(left, INT32_MAX)));
+  hexrays_failure_t hf;
+  cfuncptr_t cf = decompile_function(pfn->start_ea, &hf, DECOMP_NO_WAIT);
+  set_decompiler_timeout(old_timeout);
+
+  if ( cf == nullptr )
+  {
+    std::string why = to_std(hf.desc());
+    const char *code = "decompile_failed";
+    switch ( hf.code )
+    {
+      case MERR_CLOUD:
+        code = "cloud_error";
+        why += " (the cloud decompiler needs internet access and a signed-in Hex-Rays account; "
+               "try F5 in IDA once to sign in)";
+        break;
+      case MERR_LICENSE: code = "decompiler_license"; break;
+      case MERR_TIMEOUT: code = "timeout"; break;
+      case MERR_BUSY: code = "busy"; break;
+      default: break;
+    }
+    if ( hf.errea != BADADDR )
+      why += " at " + hexea(hf.errea);
+    fail(code, "decompilation of " + func_name(pfn->start_ea) + " failed: " + why);
+  }
+
+  const strvec_t &sv = cf->get_pseudocode();
+  Value lines = Value::array();
+  for ( size_t i = 0; i < sv.size() && static_cast<int64_t>(i) < max_lines; i++ )
+  {
+    qstring plain;
+    tag_remove(&plain, sv[i].line);
+    lines.push(to_std(plain));
+  }
+  Value o = Value::object();
+  o.set("function", func_ref(pfn->start_ea));
+  const char *ver = get_hexrays_version();
+  o.set("decompiler", ver != nullptr ? ver : "");
+  o.set("line_count", static_cast<int64_t>(sv.size()));
+  o.set("lines", std::move(lines));
+  o.set("truncated", static_cast<int64_t>(sv.size()) > max_lines);
+  return o;
+}
+
 const MethodDef kMethods[] = {
   {"status", h_status, false},
   {"get_metadata", h_metadata, false},
@@ -1392,6 +1458,8 @@ const MethodDef kMethods[] = {
   {"set_comment", h_set_comment, true},
   {"set_function_comment", h_set_function_comment, true},
   {"create_function", h_create_function, true},
+  // MFF_WRITE: the decompiler updates database caches/netnodes while it runs.
+  {"decompile", h_decompile, true},
 };
 
 }  // namespace
@@ -1402,6 +1470,11 @@ const MethodDef *find_method(const std::string &name)
     if ( name == m.name )
       return &m;
   return nullptr;
+}
+
+bool decompiler_available()
+{
+  return init_hexrays_plugin();
 }
 
 mj::Value describe_methods()

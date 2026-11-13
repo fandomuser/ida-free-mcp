@@ -70,7 +70,7 @@ async def test_status_and_metadata(client):
     st = await call(client, "ida_status")
     assert st["connected"] is True
     db = next(d for d in st["databases"] if d["database"].lower() == "sample.exe")
-    assert db["connected"] and db["capabilities"]["decompiler"] is False
+    assert db["connected"] and isinstance(db["capabilities"]["decompiler"], bool)
     md = await call(client, "ida_get_metadata")
     assert md["file_name"] == "sample.exe"
     assert md["bitness"] == 64
@@ -237,7 +237,7 @@ async def test_stdio_end_to_end():
                                    cwd=str(Path(__file__).parent.parent))
     async with Client(params) as c:
         tools = {t.name for t in (await c.list_tools()).tools}
-        assert "ida_list_functions" in tools and "ida_rename_function" in tools and len(tools) == 27
+        assert "ida_list_functions" in tools and "ida_rename_function" in tools and len(tools) == 28
         r = await c.call_tool("ida_status", {})
         assert not r.is_error and r.structured_content["connected"] is True
 
@@ -271,3 +271,17 @@ async def test_live_writes(client):
     r = await call(client, "ida_rename_symbol", {"address": s_addr, "new_name": "g_secret_str"})
     assert r["new_name"] == "g_secret_str"
     await call(client, "ida_rename_symbol", {"address": s_addr, "new_name": r["old_name"] or ""})
+
+
+async def test_decompile_matches_capability(client):
+    """IDA Free: the cloud decompiler refuses plugin access -> clear error. Home/Pro: pseudocode."""
+    st = await call(client, "ida_status")
+    db = next(d for d in st["databases"] if d["database"].lower() == "sample.exe")
+    r = await client.call_tool("ida_decompile", {"address": "idamcp_classify"})
+    if db["capabilities"]["decompiler"]:
+        assert not r.is_error, r.content[0].text
+        text = "\n".join(r.structured_content["lines"])
+        assert '"negative"' in text and '"large"' in text
+    else:
+        assert r.is_error and "[decompiler_unavailable]" in r.content[0].text
+        assert "IDA Home" in r.content[0].text

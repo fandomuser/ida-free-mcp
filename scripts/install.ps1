@@ -66,5 +66,5 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
 Remove-Registration
 & claude mcp add --scope $Scope idamcp -- uv --directory $serverDir run --frozen idamcp-server
 if ($LASTEXITCODE -ne 0) { throw "claude mcp add failed" }
-Write-Host "Registered MCP server 'idamcp' (scope: $Scope, all 27 tools)."
+Write-Host "Registered MCP server 'idamcp' (scope: $Scope, all 28 tools)."
 Write-Host "In IDA Free 9.5, open a database and choose Edit > Plugins > idamcp to turn MCP on."

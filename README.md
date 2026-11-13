@@ -3,10 +3,10 @@
 Lets Claude Code (or any MCP client) inspect the database you have open in
 **IDA Free 9.5** on Windows: functions, disassembly, strings, imports/exports,
 cross-references, call graph, basic blocks/CFG, byte search, names, comments,
-and (optionally) renames, comments and function creation.
+renames, comments and function creation, plus Hex-Rays pseudocode wherever IDA
+allows plugins to use a decompiler (see [Decompiler](#decompiler)).
 
-It does not use IDA Pro, IDAPython, idalib, the Hex-Rays decompiler (local or
-cloud), or any license workaround. Nothing in IDA is patched.
+It does not use IDA Pro, IDAPython, idalib, or any license workaround. Nothing in IDA is patched.
 
 ```
 Claude Code ──stdio/MCP──> idamcp-server (Python, official `mcp` SDK)
@@ -63,7 +63,7 @@ The script:
 3. creates the server environment with locked dependencies (`uv sync --frozen`);
 4. registers the server: `claude mcp add --scope user idamcp -- uv --directory <repo>\server run --frozen idamcp-server`.
 
-Check it: `claude mcp get idamcp` should report `✔ Connected`. All 27 tools are registered;
+Check it: `claude mcp get idamcp` should report `✔ Connected`. All 28 tools are registered;
 there is no separate write option.
 
 ## Turning MCP on and off (per IDA window)
@@ -113,6 +113,7 @@ finish. Then ask Claude Code, for example:
 | `ida_rename_function`, `ida_rename_symbol` | Rename a function, or any address (empty name removes it) |
 | `ida_set_comment`, `ida_set_function_comment` | Set or remove (empty text) regular/repeatable comments |
 | `ida_create_function` | Create a function at undiscovered code |
+| `ida_decompile` | Hex-Rays pseudocode of a function, where IDA permits it (see [Decompiler](#decompiler)) |
 
 Addresses are hex strings (`0x140001000`, or `140001000h`). Most tools also accept a
 symbol name. Lists return `next_offset` (or `next_address` / `next_start`) to continue.
@@ -136,6 +137,21 @@ argument: the file name (`a.exe`), IDB name, full path, or IDA process id. Examp
 While MCP is ON, modifications are available with no extra switch. Each change is printed in IDA's Output window, goes through IDA's normal APIs, and can be undone
 with Ctrl+Z. Renames that would collide with an existing name are refused. Write requests are
 never retried automatically.
+
+### Decompiler
+
+`ida_decompile` uses IDA's official decompiler API (`init_hexrays_plugin`, `decompile_function`).
+
+- **IDA Home, Educational and Pro:** it returns the pseudocode of the containing function, as text
+  lines. With a cloud decompiler (Home/Educational), the function is sent to Hex-Rays' servers.
+- **IDA Free 9.5:** the cloud decompiler works when you press F5 yourself, but Hex-Rays does not let
+  plugins use it. The IDA 9.5 release notes say the cloud decompiler's API is enabled only for "IDA
+  Home, IDA Educational". It was verified on this setup: the API refuses even after a successful F5.
+  The tool then returns `[decompiler_unavailable]` with that explanation. idamcp deliberately does
+  not work around this, for example by calling the decompiler's internals or scraping the
+  Pseudocode window.
+- `ida_status` shows `capabilities.decompiler`, which says whether pseudocode is available in that
+  IDA window. Calls get up to 90 s, because a decompile cannot be interrupted part-way.
 
 ### Configuration
 
@@ -176,8 +192,7 @@ never retried automatically.
 
 ## Limitations
 
-- **No decompiler.** IDA Free's cloud decompiler is not used, and no tool returns pseudocode.
-  `ida_status` reports `decompiler: false`.
+- **No pseudocode on IDA Free** (see [Decompiler](#decompiler)).
 - IDA Free has no batch mode, so a person (or the test script) must open the database in the GUI and
   turn MCP on.
 - Results reflect IDA's analysis. For example, `main` is not auto-named in binaries without matching

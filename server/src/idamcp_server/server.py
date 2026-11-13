@@ -30,8 +30,10 @@ Tools for inspecting the database currently open in IDA Free 9.5 (disassembler o
 - Lists are paginated: pass the returned `next_offset` (or `next_address`/`next_start`)
   back to continue. Work per call is time-bounded; `truncated_by_deadline: true` means
   call again with the cursor.
-- There is NO decompiler: IDA Free's cloud decompiler is not used and nothing here
-  produces pseudocode. Reason from disassembly, xrefs and the control-flow graph.
+- ida_decompile returns Hex-Rays pseudocode only where IDA lets plugins use a decompiler
+  (IDA Home/Educational/Pro; ida_status shows capabilities.decompiler). IDA Free's cloud
+  decompiler is interactive-only, so on IDA Free reason from disassembly, xrefs and the
+  control-flow graph. Never present disassembly as pseudocode.
 - MCP is turned on per IDA window (Edit > Plugins > idamcp); while on, reads and writes
   (renames, comments, function creation) are available. Changes can be undone in IDA (Ctrl+Z).
 - Several databases can be open at once (one IDA window each). ida_status lists them; pass
@@ -40,6 +42,9 @@ Tools for inspecting the database currently open in IDA Free 9.5 (disassembler o
 - Start with ida_status / ida_get_metadata, then ida_list_functions, ida_get_disassembly,
   ida_get_xrefs_to, ida_get_callers / ida_get_callees.
 """
+
+# Decompilation (especially in the cloud) cannot be interrupted midway, so allow longer.
+DECOMPILE_TIMEOUT_MS = 90_000
 
 _HEX = re.compile(r"^0[xX]([0-9a-fA-F]{1,16})$")
 _HEX_H = re.compile(r"^([0-9a-fA-F]{1,16})[hH]$")
@@ -130,13 +135,14 @@ def create_server(bridge: Bridge) -> MCPServer:
         lifespan=lifespan,
     )
 
-    async def call(database: str | None, method: str, *, write: bool = False, **params: Any) -> Any:
+    async def call(database: str | None, method: str, *, write: bool = False, timeout_ms: int | None = None,
+                   **params: Any) -> Any:
         if write and not database and bridge.selected_pid is None and len(bridge.instances()) > 1:
             names = ", ".join(f"{i.describe().get('database')} (pid {i.pid})" for i in bridge.instances())
             raise ToolError("Several IDA databases are open; pass `database` to say which one to modify. "
                             f"Open: {names}")
         try:
-            return await bridge.call(method, params, retry=not write, database=database)
+            return await bridge.call(method, params, retry=not write, database=database, timeout_ms=timeout_ms)
         except BridgeError as e:
             raise ToolError(f"[{e.code}] {e.message}") from e
         except BridgeUnavailable as e:
@@ -381,6 +387,19 @@ def create_server(bridge: Bridge) -> MCPServer:
     async def ida_get_names(offset: Offset = 0, limit: Limit = 100, filter: Filter = None, database: Database = None) -> dict[str, Any]:
         """Named locations (IDA's Names list) with demangled form and kind (function/code/data/string)."""
         return await call(database, "get_names", offset=offset, limit=limit, filter=filter)
+
+    @mcp.tool(title="Decompile function",
+              annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True))
+    async def ida_decompile(
+        address: Address,
+        max_lines: Annotated[int, Field(ge=1, le=10000, description="Maximum pseudocode lines.")] = 1000,
+        database: Database = None,
+    ) -> dict[str, Any]:
+        """Hex-Rays pseudocode (C-like) for the function containing `address`. Only works where IDA
+        lets plugins use a decompiler (IDA Home/Educational/Pro); on IDA Free it returns
+        [decompiler_unavailable]. With a cloud decompiler the function is sent to Hex-Rays."""
+        return await call(database, "decompile", timeout_ms=DECOMPILE_TIMEOUT_MS,
+                          address=normalize_address(address), max_lines=max_lines)
 
     @mcp.tool(title="Comments", annotations=READ_ONLY)
     async def ida_get_comments(

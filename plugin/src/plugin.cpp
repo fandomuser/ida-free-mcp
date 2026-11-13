@@ -156,6 +156,7 @@ struct bridge_t : public plugmod_t
   std::string ida_version;
   std::string idb_path;
   std::string input_file;
+  bool has_decompiler = false;  // measured on the main thread at each activation
 
   bridge_t();
   ~bridge_t() override;
@@ -225,6 +226,7 @@ bool bridge_t::start_bridge()
 {
   if ( !usable )
     return false;
+  has_decompiler = decompiler_available();
   token = platform::random_hex(32);
   if ( token.empty() )
   {
@@ -353,8 +355,8 @@ Value bridge_t::hello_info() const
   o.set("ida_version", ida_version);
   o.set("idb_path", idb_path);
   o.set("methods", describe_methods());
-  // Explicit capability report: this bridge only exposes what IDA Free's SDK
-  // genuinely provides. It never produces pseudocode.
+  // Explicit capability report. "decompiler" is true only if a Hex-Rays
+  // decompiler (in IDA Free: the cloud decompiler) is loaded for this database.
   Value caps = Value::object();
   caps.set("disassembly", true);
   caps.set("xrefs", true);
@@ -362,7 +364,7 @@ Value bridge_t::hello_info() const
   caps.set("strings", true);
   caps.set("byte_search", true);
   caps.set("database_writes", true);
-  caps.set("decompiler", false);
+  caps.set("decompiler", has_decompiler);
   caps.set("scripting", false);
   o.set("capabilities", std::move(caps));
   return o;
