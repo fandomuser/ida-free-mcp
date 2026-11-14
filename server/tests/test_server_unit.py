@@ -16,10 +16,20 @@ READ_TOOLS = {
     "ida_get_imports", "ida_get_exports", "ida_get_entrypoints", "ida_get_xrefs_to", "ida_get_xrefs_from",
     "ida_get_callers", "ida_get_callees", "ida_get_basic_blocks", "ida_get_control_flow_graph",
     "ida_search_bytes", "ida_get_names", "ida_get_comments", "ida_decompile",
+    # v1.1
+    "ida_get_function_type", "ida_list_types", "ida_get_type", "ida_get_stack_frame", "ida_get_cursor",
+    "ida_get_selection", "ida_list_bookmarks", "ida_get_item_info", "ida_decode_instruction",
+    "ida_search_immediate", "ida_search_instructions", "ida_search_disassembly", "ida_search_pointers",
+    "ida_analyze_function", "ida_get_function_constants", "ida_find_crypto_constants",
+    "ida_compare_databases", "ida_find_similar_functions",
 }
 WRITE_TOOLS = {
     "ida_rename_function", "ida_rename_symbol", "ida_set_comment", "ida_set_function_comment",
     "ida_create_function",
+    # v1.1
+    "ida_set_function_type", "ida_declare_type", "ida_set_data_type", "ida_rename_stack_variable",
+    "ida_jump_to", "ida_add_bookmark", "ida_delete_bookmark", "ida_define_code", "ida_define_data",
+    "ida_undefine", "ida_reanalyze_range", "ida_export_analysis",
 }
 
 
@@ -71,11 +81,11 @@ class FakeBridge:
 
 
 @pytest.mark.anyio
-async def test_all_28_tools_registered():
+async def test_all_58_tools_registered():
     async with Client(create_server(FakeBridge()), raise_exceptions=True) as c:
         names = {t.name for t in (await c.list_tools()).tools}
     assert names == READ_TOOLS | WRITE_TOOLS
-    assert len(names) == 28
+    assert len(names) == 58
 
 
 @pytest.mark.anyio
@@ -209,7 +219,7 @@ async def test_database_parameter_routes_each_call():
     fb = _two_dbs()
     async with Client(create_server(fb), raise_exceptions=True) as c:
         tools = {t.name: t for t in (await c.list_tools()).tools}
-        assert all("database" in t.input_schema["properties"] for n, t in tools.items() if n != "ida_status")
+        assert all("database" in t.input_schema["properties"] for n, t in tools.items() if n not in ("ida_status", "ida_compare_databases"))
         await c.call_tool("ida_list_functions", {"database": "a.exe"})
         await c.call_tool("ida_list_functions", {"database": "b.dll"})
         await c.call_tool("ida_get_disassembly", {"address": "0x1000", "database": "2"})

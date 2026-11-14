@@ -1,4 +1,4 @@
-﻿# UI Automation helpers for driving a test IDA instance, scoped to ONE process id.
+# UI Automation helpers for driving a test IDA instance, scoped to ONE process id.
 # Never sends global keystrokes: elements are located inside the target process
 # only and invoked through UIA patterns.
 #   ida_ui.ps1 -ProcessId 1234 -Action list            # list top-level windows and buttons
@@ -10,6 +10,7 @@ param(
     # For -Action menu: the menu path separated by '/', e.g. 'Edit/Plugins/idamcp'.
     [string]$MenuPath,
     [string]$Name,
+    [string]$Window,   # -Action click: only click inside the (dialog) window with this exact title
     [string]$Path
 )
 $ErrorActionPreference = 'Stop'
@@ -35,7 +36,18 @@ switch ($Action) {
         }
     }
     'click' {
-        foreach ($w in $wins) {
+        $scopes = $wins
+        if ($Window) {
+            $wc = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::NameProperty, $Window)
+            $scopes = @(foreach ($w in $wins) {
+                if ($w.Current.Name -eq $Window) { $w }
+                $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $wc) | Where-Object {
+                    $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window }
+            })
+            if (-not $scopes) { throw "window '$Window' not found in process $ProcessId" }
+        }
+        foreach ($w in $scopes) {
             foreach ($b in (Get-Buttons $w)) {
                 if ($b.Current.Name -eq $Name -and $b.Current.IsEnabled) {
                     $p = $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)

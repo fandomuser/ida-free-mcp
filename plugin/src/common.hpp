@@ -60,6 +60,7 @@ int xref_flags_for(const std::string &kind, bool include_flow);
 // -------- instruction decoding (search.cpp)
 const char *optype_name(optype_t t);
 std::string reg_name(int reg, size_t width);
+uint64 imm_value(const op_t &op);                // immediate masked to its operand size
 bool decode_at(ea_t ea, insn_t *insn);           // true if ea is a decodable instruction
 Value decode_json(ea_t ea, const insn_t &insn);  // structured operands + control flow
 

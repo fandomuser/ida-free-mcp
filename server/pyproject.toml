@@ -1,6 +1,6 @@
 [project]
 name = "idamcp-server"
-version = "1.0.0"
+version = "1.1.0"
 description = "MCP server exposing an IDA Free 9.5 database (via the idamcp bridge plugin) to Claude Code"
 requires-python = ">=3.11"
 license = "MIT"

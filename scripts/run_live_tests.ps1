@@ -12,6 +12,7 @@
 param(
     [switch]$Installed,       # use the plugin installed in %APPDATA%\Hex-Rays\IDA Pro\plugins instead of build\out
     [switch]$TwoDatabases,    # also open sample_b.exe in a second IDA window (multi-database tests)
+    [string]$LargeBinary,     # also open a disposable copy of this (large) binary: pagination/timeout/load tests
     [switch]$KeepOpen,        # leave IDA running afterwards
     [string]$IdaExe = 'C:\Program Files\IDA Free 9.5\ida.exe',
     [string]$PytestArgs = ''
@@ -25,6 +26,13 @@ $fixture = Join-Path $root 'tests\fixtures\sample.exe'
 $files = @('sample.exe')
 if ($TwoDatabases) { $files += 'sample_b.exe' }
 foreach ($f in $files) { Copy-Item $fixture (Join-Path $work $f) }
+if ($LargeBinary) {
+    if (-not (Test-Path $LargeBinary)) { throw "LargeBinary not found: $LargeBinary" }
+    $largeName = Split-Path $LargeBinary -Leaf
+    Copy-Item $LargeBinary (Join-Path $work $largeName)
+    $files += $largeName
+    $env:IDAMCP_LIVE_LARGE = $largeName   # tells tests/test_live_large.py which database to use
+}
 
 $userDir = Join-Path $env:APPDATA 'Hex-Rays\IDA Pro'
 # The build directory must come FIRST: IDA uses the first idamcp.dll it finds, and the user
@@ -40,12 +48,14 @@ function Start-Ida([string]$file) {
     $log = "$work\$file.log"
     $p = Start-Process -FilePath $IdaExe -ArgumentList "-L`"$log`"", "`"$work\$file`"" -PassThru
     $disc = Join-Path $instances "ida-$($p.Id).json"
-    $deadline = (Get-Date).AddSeconds(120)
+    $deadline = (Get-Date).AddSeconds(600)
     # Accept the load dialog until the plugin reports its (OFF) state for this database.
     while (-not ((Test-Path $log) -and (Select-String -Path $log -Pattern '\[idamcp\] MCP DISABLED' -Quiet))) {
         if ($p.HasExited) { throw "IDA exited early; see $log" }
         if ((Get-Date) -gt $deadline) { throw "plugin did not load; see $log" }
         try { Invoke-Ui $p.Id @('-Action', 'click', '-Name', 'OK') | Out-Null } catch {}
+        # Never fetch debug symbols during tests (no network, no Microsoft Symbol Server).
+        try { Invoke-Ui $p.Id @('-Action', 'click', '-Name', 'No', '-Window', 'Load PDB file') | Out-Null } catch {}
         Start-Sleep -Milliseconds 700
     }
     Start-Sleep -Seconds 2
@@ -68,14 +78,8 @@ function Start-Ida([string]$file) {
 function Stop-Ida($p) {
     if ($p.HasExited) { return $true }
     $wasOn = Test-Path (Join-Path $instances "ida-$($p.Id).json")
-    Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern bool PostMessage(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l);' -ErrorAction SilentlyContinue
-    $p.Refresh()  # MainWindowHandle is cached; it may still point at the closed "Load a new file" dialog
-    [W.U]::PostMessage($p.MainWindowHandle, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null  # WM_CLOSE
-    # The throwaway test database is discarded: answer IDA's "Save database" dialog with "Don't save".
-    for ($i = 0; $i -lt 30 -and -not $p.HasExited; $i++) {
-        Start-Sleep -Seconds 1
-        try { Invoke-Ui $p.Id @('-Action', 'click', '-Name', "Don't save") | Out-Null } catch {}
-    }
+    # Title-matched WM_CLOSE + "Don't save" (throwaway test databases only).
+    try { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\close_ida.ps1') -ProcessId $p.Id | Out-Null } catch {}
     if (-not $p.WaitForExit(15000)) { Write-Warning "IDA did not close; pid $($p.Id) left running"; return $false }
     $disc = Join-Path $instances "ida-$($p.Id).json"
     $logFile = Join-Path $env:LOCALAPPDATA "idamcp\logs\bridge-$($p.Id).log"
@@ -97,7 +101,7 @@ import asyncio, sys, time
 from idamcp_server.bridge import BridgeManager
 async def main(pids):
     m = BridgeManager()
-    end = time.time() + 180
+    end = time.time() + 900
     for pid in pids:
         while True:
             st = await m.call("status", database=pid)

@@ -79,6 +79,14 @@ tinfo_t parse_one(const std::string &decl, qstring *name, int extra_flags = 0)
   return tif;
 }
 
+// Looks up a local type by name. tinfo_t::get_named_type() also "succeeds" for
+// unknown names (it builds an unresolved reference), so check the ordinal first.
+bool load_named(const std::string &name, tinfo_t *out)
+{
+  const int32 ord = get_type_ordinal(get_idati(), name.c_str());
+  return ord > 0 && out->get_numbered_type(get_idati(), static_cast<uint32>(ord));
+}
+
 Value func_details(const tinfo_t &tif)
 {
   Value o = Value::object();
@@ -292,7 +300,7 @@ Value h_get_type(Call &c)
   const std::string name = p_str(c, "name", true, kMaxNameLen);
   const int64_t limit = p_int(c, "max_members", 500, 1, kMaxMembers);
   tinfo_t tif;
-  if ( !tif.get_named_type(get_idati(), name.c_str(), BTF_TYPEDEF, false) )
+  if ( !load_named(name, &tif) )
     fail("not_found", "no local type named '" + name + "' (see ida_list_types)");
   return describe_named(tif, name, limit);
 }
@@ -306,7 +314,7 @@ Value h_declare_type(Call &c)
   if ( name.empty() )
     fail("invalid_params", "the declaration must name the type, e.g. \"struct packet { int len; char data[16]; }\"");
   tinfo_t existing;
-  const bool exists = existing.get_named_type(get_idati(), name.c_str(), BTF_TYPEDEF, false);
+  const bool exists = load_named(to_std(name), &existing);
   if ( exists && !replace )
     fail("already_exists", "a type named '" + to_std(name) + "' already exists; pass replace=true to redefine it");
   const tinfo_code_t code = tif.set_named_type(get_idati(), name.c_str(), exists ? NTF_REPLACE : 0);
@@ -314,7 +322,8 @@ Value h_declare_type(Call &c)
     fail("ida_rejected", std::string("IDA could not save the type: ") + tinfo_errstr(code));
   msg("[idamcp] %s type %s\n", exists ? "replaced" : "created", name.c_str());
   tinfo_t saved;
-  saved.get_named_type(get_idati(), name.c_str(), BTF_TYPEDEF, false);
+  if ( !load_named(to_std(name), &saved) )
+    fail("ida_rejected", "the type was saved but cannot be read back");
   Value o = describe_named(saved, to_std(name), 500);
   o.set("replaced", exists);
   return o;

@@ -79,8 +79,7 @@ const KnownConst kKnownImmediates[] = {
 const KnownConst *known_immediate(uint64 v)
 {
   for ( const auto &k : kKnownImmediates )
-    if ( k.value == v || (k.value <= 0xFFFFFFFFULL && (v & 0xFFFFFFFFULL) == k.value && v > 0xFFFFFFFFULL
-                          && (v >> 32) == 0xFFFFFFFFULL) )
+    if ( k.value == v )
       return &k;
   return nullptr;
 }
@@ -212,10 +211,11 @@ FuncScan scan_function(func_t *pfn, const std::set<ea_t> &imports, const Call &c
       if ( op.type == o_imm )
       {
         // Ignore immediates that are really addresses (offsets into the image).
-        if ( !(is_mapped(static_cast<ea_t>(op.value)) && op.value > 0xFFFF) )
+        const uint64 v = imm_value(op);
+        if ( !(is_mapped(static_cast<ea_t>(v)) && v > 0xFFFF) )
         {
-          fs.constants[op.value]++;
-          auto &sites = fs.const_sites[op.value];
+          fs.constants[v]++;
+          auto &sites = fs.const_sites[v];
           if ( sites.size() < 8 ) sites.push_back(ea);
         }
       }
@@ -634,7 +634,8 @@ Value h_find_crypto_constants(Call &c)
       const op_t &op = insn.ops[i];
       if ( op.type == o_void ) break;
       if ( op.type != o_imm ) continue;
-      const KnownConst *k = known_immediate(op.value);
+      const uint64 v = imm_value(op);
+      const KnownConst *k = known_immediate(v);
       if ( k == nullptr ) continue;
       if ( static_cast<int64_t>(imms.as_array().size()) >= max )
       {
@@ -643,7 +644,7 @@ Value h_find_crypto_constants(Call &c)
       }
       Value m = Value::object();
       m.set("address", hexea(ea));
-      m.set("value", hexea(op.value));
+      m.set("value", hexea(v));
       m.set("algorithm_candidate", k->algorithm);
       m.set("evidence", k->what);
       m.set("kind", "immediate");
@@ -684,10 +685,20 @@ Value h_find_crypto_constants(Call &c)
 
 Value h_function_fingerprints(Call &c)
 {
-  const int64_t offset = p_int(c, "offset", 0, 0, INT64_MAX);
-  const int64_t limit = p_int(c, "limit", 100, 1, 500);
-  const int64_t qty = static_cast<int64_t>(get_func_qty());
+  int64_t offset = p_int(c, "offset", 0, 0, INT64_MAX);
+  int64_t limit = p_int(c, "limit", 100, 1, 500);
+  int64_t qty = static_cast<int64_t>(get_func_qty());
   const std::set<ea_t> imports = import_slots();
+  // Single-function mode: fingerprint only the function containing `address`.
+  if ( param(c, "address") != nullptr )
+  {
+    func_t *one = p_func(c, "address");
+    offset = get_func_num(one->start_ea);
+    if ( offset < 0 )
+      fail("not_a_function", "no function at the given address");
+    limit = 1;
+    qty = offset + 1;
+  }
   Value items = Value::array();
   int64_t n = offset;
   bool truncated = false;

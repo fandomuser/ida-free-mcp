@@ -39,8 +39,15 @@ Tools for inspecting the database currently open in IDA Free 9.5 (disassembler o
 - Several databases can be open at once (one IDA window each). ida_status lists them; pass
   `database` (file name like "a.exe", or the IDA pid) to any tool to target one. Writes
   require `database` whenever more than one database is open.
-- Start with ida_status / ida_get_metadata, then ida_list_functions, ida_get_disassembly,
-  ida_get_xrefs_to, ida_get_callers / ida_get_callees.
+- Start with ida_status / ida_get_metadata, then ida_analyze_function (one-call summary),
+  ida_list_functions, ida_get_disassembly, ida_get_xrefs_to, ida_get_callers / ida_get_callees.
+- Structured facts: ida_decode_instruction (operands from IDA's decoder), ida_get_function_type,
+  ida_get_stack_frame (database stack members, not decompiler locals), ida_get_type.
+- Search: ida_search_instructions (mnemonic/operand filters), ida_search_immediate,
+  ida_search_disassembly, ida_search_pointers, ida_search_bytes, ida_search_strings.
+- Heuristics (crypto candidates, function similarity) are evidence, not proof; say so.
+- Workflows: prompts triage_binary, investigate_function, identify_crypto, reconstruct_structure,
+  compare_versions, explore_call_graph.
 """
 
 # Decompilation (especially in the cloud) cannot be interrupted midway, so allow longer.
@@ -462,6 +469,13 @@ def create_server(bridge: Bridge) -> MCPServer:
         """Creates a function at an address that is not yet part of one."""
         return await call(database, "create_function", write=True, address=normalize_address(address),
                           end=_optional_hex(end, "end"))
+
+    # v1.1 feature groups (imported here to avoid a circular import at module load).
+    from .tools_ext import register_extended
+    from .workflows import register_workflows
+
+    register_extended(mcp, call)
+    register_workflows(mcp, call, bridge)
 
     return mcp
 

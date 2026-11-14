@@ -56,7 +56,12 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw "uv is required
 Push-Location $serverDir
 try {
     & uv sync --frozen
-    if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
+    if ($LASTEXITCODE -ne 0) {
+        # A running MCP client (Claude Code, OpenCode, Codex) keeps idamcp-server.exe locked.
+        if (Test-Path (Join-Path $serverDir '.venv')) {
+            Write-Warning "Could not refresh the server environment (it is in use by a running MCP client). The code is installed in editable mode, so the update still takes effect; close your MCP clients and re-run this script to refresh package metadata."
+        } else { throw "uv sync failed" }
+    }
 } finally { Pop-Location }
 
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
@@ -64,7 +69,7 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
     return
 }
 Remove-Registration
-& claude mcp add --scope $Scope idamcp -- uv --directory $serverDir run --frozen idamcp-server
+& claude mcp add --scope $Scope idamcp -- uv --directory $serverDir run --no-sync idamcp-server
 if ($LASTEXITCODE -ne 0) { throw "claude mcp add failed" }
-Write-Host "Registered MCP server 'idamcp' (scope: $Scope, all 28 tools)."
+Write-Host "Registered MCP server 'idamcp' (scope: $Scope, all 58 tools)."
 Write-Host "In IDA Free 9.5, open a database and choose Edit > Plugins > idamcp to turn MCP on."

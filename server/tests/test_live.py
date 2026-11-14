@@ -237,7 +237,7 @@ async def test_stdio_end_to_end():
                                    cwd=str(Path(__file__).parent.parent))
     async with Client(params) as c:
         tools = {t.name for t in (await c.list_tools()).tools}
-        assert "ida_list_functions" in tools and "ida_rename_function" in tools and len(tools) == 28
+        assert "ida_list_functions" in tools and "ida_rename_function" in tools and len(tools) == 58
         r = await c.call_tool("ida_status", {})
         assert not r.is_error and r.structured_content["connected"] is True
 

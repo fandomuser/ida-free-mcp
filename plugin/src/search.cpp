@@ -47,6 +47,13 @@ std::string reg_name(int reg, size_t width)
   return std::string();
 }
 
+uint64 imm_value(const op_t &op)
+{
+  const size_t sz = get_dtype_size(op.dtype);
+  const uint64 v = static_cast<uint64>(op.value);
+  return (sz > 0 && sz < 8) ? (v & ((1ULL << (8 * sz)) - 1)) : v;
+}
+
 bool decode_at(ea_t ea, insn_t *insn)
 {
   return is_code(get_flags(ea)) && decode_insn(insn, ea) > 0;
@@ -93,8 +100,8 @@ Value decode_json(ea_t ea, const insn_t &insn)
         ov.set("register", reg_name(op.reg, dsz));
         break;
       case o_imm:
-        ov.set("value", static_cast<int64_t>(op.value));
-        ov.set("value_hex", hexea(op.value));
+        ov.set("value", static_cast<int64_t>(imm_value(op)));
+        ov.set("value_hex", hexea(imm_value(op)));
         break;
       case o_mem:
       case o_near:
@@ -371,7 +378,7 @@ Value h_search_instructions(Call &c)
           if ( !is_reg_op && !is_base )
             continue;
         }
-        if ( want_imm && !(op.type == o_imm && op.value == imm) )
+        if ( want_imm && !(op.type == o_imm && (imm_value(op) == imm || op.value == imm)) )
           continue;
         if ( target != BADADDR && !((op.type == o_mem || op.type == o_near || op.type == o_far) && op.addr == target) )
           continue;

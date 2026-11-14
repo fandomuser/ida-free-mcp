@@ -20,9 +20,17 @@ multi-database `database` routing, ambiguous-write refusal, localhost + token, n
 - [x] Refactor + registry (builds, 172 C++ checks pass)
 - [x] A types.cpp: get/set_function_type, list_types, get_type, declare_type, set_data_type (compiles)
 - [x] B frames.cpp: get_stack_frame, rename_stack_variable (compiles)
-- [x] C ui.cpp, D edit.cpp, E/F search.cpp, G/I analysis.cpp (compile; live smoke test next)
-- [ ] Python tools for all groups + H/J/K
-- [ ] Unit + live tests, README, CHANGELOG, release
+- [x] C ui.cpp, D edit.cpp, E/F search.cpp, G/I analysis.cpp (live-tested)
+- [x] Python tools for all groups (tools_ext.py) + H/J/K (compare.py, workflows.py): 58 tools, 6 prompts, 4 resources
+- [x] Unit tests (37) + live tests: test_live_v11.py, test_live_v11_multi.py, test_live_large.py
+- [x] README, CHANGELOG, version 1.1.0
+- [x] Committed locally; push + tag v1.1.0 awaiting approval
+
+## Lessons
+- tinfo_t::get_named_type() succeeds for unknown names; check get_type_ordinal() > 0 first.
+- op_t::value holds 32-bit immediates sign-extended; mask with get_dtype_size (imm_value()).
+- IDA asks "Load PDB file" for binaries with debug info; tests answer No (no symbol-server access).
+- Process.MainWindowHandle may point at a leftover popup; close IDA via the "IDA - *" window.
 
 ## Verified API notes (IDA SDK 9.5 headers)
 - Frames are tinfo UDTs: get_func_frame_ea, get_frame_part_ea(FPC_*), soff_to_fpoff_ea, rename_udm.

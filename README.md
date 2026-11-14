@@ -64,10 +64,12 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 The script:
 1. builds `idamcp.dll` (Release, x64) and runs the C++ unit tests;
 2. copies it to `%APPDATA%\Hex-Rays\IDA Pro\plugins\` (IDA's per-user plugin folder, so the IDA installation is not modified);
-3. creates the server environment with locked dependencies (`uv sync --frozen`);
-4. registers the server: `claude mcp add --scope user idamcp -- uv --directory <repo>\server run --frozen idamcp-server`.
+3. creates the server environment with locked dependencies (`uv sync --frozen`). MCP clients start
+   the server with `uv run --no-sync`, so a client starting up never tries to modify an environment
+   that another client is using;
+4. registers the server: `claude mcp add --scope user idamcp -- uv --directory <repo>\server run --no-sync idamcp-server`.
 
-Check it: `claude mcp get idamcp` should report `✔ Connected`. All 28 tools are registered;
+Check it: `claude mcp get idamcp` should report `✔ Connected`. All 58 tools are registered;
 there is no separate write option.
 
 ## Turning MCP on and off (per IDA window)
@@ -118,6 +120,24 @@ finish. Then ask Claude Code, for example:
 | `ida_set_comment`, `ida_set_function_comment` | Set or remove (empty text) regular/repeatable comments |
 | `ida_create_function` | Create a function at undiscovered code |
 | `ida_decompile` | Hex-Rays pseudocode of a function, where IDA permits it (see [Decompiler](#decompiler)) |
+
+**Added in 1.1** (see [CHANGELOG](CHANGELOG.md)):
+
+| Group | Tools |
+|---|---|
+| Types | `ida_get_function_type`, `ida_set_function_type`, `ida_list_types`, `ida_get_type`, `ida_declare_type` (structs, unions, enums and typedefs from C; `replace=true` edits), `ida_set_data_type` |
+| Stack frames | `ida_get_stack_frame` (layout and members with offsets, sizes and types; database stack members, not decompiler locals), `ida_rename_stack_variable` |
+| Cursor and navigation | `ida_get_cursor`, `ida_get_selection`, `ida_jump_to`, `ida_list_bookmarks`, `ida_add_bookmark`, `ida_delete_bookmark` |
+| Code and data | `ida_get_item_info`, `ida_define_code`, `ida_define_data`, `ida_undefine`, `ida_reanalyze_range` (explicit addresses; ranges capped at 64 KiB, reanalysis at 64 MiB) |
+| Search and decoding | `ida_decode_instruction` (operands from IDA's decoder), `ida_search_immediate`, `ida_search_instructions` (mnemonic, operand type, register, immediate, target), `ida_search_disassembly`, `ida_search_pointers` |
+| Function intelligence | `ida_analyze_function` (`brief`, `standard` or `deep`), `ida_get_function_constants`, `ida_find_crypto_constants` (candidates, with evidence) |
+| Comparison | `ida_compare_databases`, `ida_find_similar_functions`: names, then exact and normalized hashes, then a scored heuristic. The score is a confidence, not proof of equivalence. |
+| Export | `ida_export_analysis`: bounded JSON with functions, summaries, names, types, comments, xrefs and CFGs, written to an explicit path. It never overwrites a file unless asked. |
+
+**Prompts** (pick them in your MCP client): `triage_binary`, `investigate_function`,
+`identify_crypto`, `reconstruct_structure`, `compare_versions` and `explore_call_graph`.
+**Resources**: `idamcp://databases`, `idamcp://{database}/metadata`,
+`idamcp://{database}/functions` and `idamcp://{database}/function/{address}`.
 
 Addresses are hex strings (`0x140001000`, or `140001000h`). Most tools also accept a
 symbol name. Lists return `next_offset` (or `next_address` / `next_start`) to continue.
@@ -230,6 +250,10 @@ analysis and runs `pytest -m live`. That covers reads, writes, OFF/ON shutdown c
 cycles with token rotation and reconnection, and independent per-window state. Finally it closes IDA
 with MCP still ON and fails unless the shutdown was clean. Add `-Installed` to test the installed DLL,
 and `-TwoDatabases` to also open a second copy (`sample_b.exe`).
+`-LargeBinary <path>` also opens a disposable copy of a large binary. The test runs used
+`python313.dll` (10,392 functions) for full pagination, deadline truncation and resume,
+whole-database fingerprinting, and turning MCP off with requests pending. IDA's "Load PDB file"
+prompt is answered No, so tests never contact a symbol server.
 
 ## Troubleshooting
 
