@@ -14,6 +14,13 @@ ida_add_plugin(idamcp
     SOURCES
         src/plugin.cpp
         src/handlers.cpp
+        src/common.cpp
+        src/types.cpp
+        src/frames.cpp
+        src/ui.cpp
+        src/edit.cpp
+        src/search.cpp
+        src/analysis.cpp
         src/json.cpp
         src/transport.cpp
         src/platform.cpp
