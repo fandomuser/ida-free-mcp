@@ -255,13 +255,50 @@ async def test_write_needs_explicit_database_when_several_open():
 
 
 @pytest.mark.anyio
-async def test_decompile_uses_long_timeout_and_maps_unavailable():
-    fb = FakeBridge()
+async def test_decompile_api_path_then_gui_fallback(monkeypatch):
+    import idamcp_server.server as srv
+    monkeypatch.setattr(srv, "GUI_DECOMPILE_POLL_S", 0.0)
+
+    class DecompBridge(FakeBridge):
+        def __init__(self, api_ok: bool, ready_after: int, request_error: str | None = None):
+            super().__init__()
+            self.api_ok, self.ready_after, self.reads, self.request_error = api_ok, ready_after, 0, request_error
+
+        async def call(self, method, params=None, *, retry=True, timeout_ms=None, database=None):
+            await super().call(method, params, retry=retry, timeout_ms=timeout_ms, database=database)
+            if method == "decompile":
+                if self.api_ok:
+                    return {"lines": ["int f() {}"], "line_count": 1}
+                raise BridgeError("decompiler_unavailable", "IDA Free")
+            if method == "decompile_gui_request":
+                if self.request_error:
+                    raise BridgeError(self.request_error, "no F5")
+                return {"function": {"name": "f", "address": "0x1000"}, "requested": True}
+            if method == "decompile_gui_read":
+                self.reads += 1
+                if self.reads < self.ready_after:
+                    return {"ready": False}
+                return {"ready": True, "lines": ["int f() {}"], "line_count": 1, "widget": "Pseudocode-A"}
+            return {}
+
+    # IDA Home/Pro: the API answers, no UI is touched.
+    fb = DecompBridge(api_ok=True, ready_after=1)
     async with Client(create_server(fb), raise_exceptions=True) as c:
-        r = await c.call_tool("ida_decompile", {"address": "0x140001000"})
-        assert not r.is_error
-        fb.raise_exc = BridgeError("decompiler_unavailable", "IDA Free: interactive only")
-        r = await c.call_tool("ida_decompile", {"address": "0x140001000"})
-    assert fb.calls[0][:2] == ("decompile", {"address": "0x140001000", "max_lines": 1000})
-    assert fb.timeouts[0] == 90_000
+        r = await c.call_tool("ida_decompile", {"address": "0x1000"})
+    assert not r.is_error and r.structured_content["method"] == "decompiler_api"
+    assert [m for m, _, _ in fb.calls] == ["decompile"] and fb.timeouts[0] == 90_000
+
+    # IDA Free: falls back to F5 + polling until the Pseudocode window shows the function.
+    fb = DecompBridge(api_ok=False, ready_after=3)
+    async with Client(create_server(fb), raise_exceptions=True) as c:
+        r = await c.call_tool("ida_decompile", {"address": "0x1000"})
+    assert not r.is_error and r.structured_content["method"] == "interactive_cloud_decompiler"
+    assert "ready" not in r.structured_content
+    assert [m for m, _, _ in fb.calls] == ["decompile", "decompile_gui_request"] + ["decompile_gui_read"] * 3
+    assert fb.calls[1][2] is False  # the UI request is never auto-retried
+
+    # F5 unavailable (e.g. unsupported processor): actionable error.
+    fb = DecompBridge(api_ok=False, ready_after=1, request_error="decompiler_unavailable")
+    async with Client(create_server(fb), raise_exceptions=True) as c:
+        r = await c.call_tool("ida_decompile", {"address": "0x1000"})
     assert r.is_error and "[decompiler_unavailable]" in r.content[0].text

@@ -7,6 +7,7 @@ actionable tool errors. It never executes code or scripts.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -30,10 +31,10 @@ Tools for inspecting the database currently open in IDA Free 9.5 (disassembler o
 - Lists are paginated: pass the returned `next_offset` (or `next_address`/`next_start`)
   back to continue. Work per call is time-bounded; `truncated_by_deadline: true` means
   call again with the cursor.
-- ida_decompile returns Hex-Rays pseudocode only where IDA lets plugins use a decompiler
-  (IDA Home/Educational/Pro; ida_status shows capabilities.decompiler). IDA Free's cloud
-  decompiler is interactive-only, so on IDA Free reason from disassembly, xrefs and the
-  control-flow graph. Never present disassembly as pseudocode.
+- ida_decompile returns Hex-Rays pseudocode: through the decompiler API on IDA Home/Educational/
+  Pro, and on IDA Free through IDA's F5 action (cloud decompiler; moves the user's view, needs a
+  signed-in account). If it fails, reason from disassembly, xrefs and the CFG. Never present
+  disassembly as pseudocode.
 - MCP is turned on per IDA window (Edit > Plugins > idamcp); while on, reads and writes
   (renames, comments, function creation) are available. Changes can be undone in IDA (Ctrl+Z).
 - Several databases can be open at once (one IDA window each). ida_status lists them; pass
@@ -52,6 +53,7 @@ Tools for inspecting the database currently open in IDA Free 9.5 (disassembler o
 
 # Decompilation (especially in the cloud) cannot be interrupted midway, so allow longer.
 DECOMPILE_TIMEOUT_MS = 90_000
+GUI_DECOMPILE_POLL_S = 0.25
 
 _HEX = re.compile(r"^0[xX]([0-9a-fA-F]{1,16})$")
 _HEX_H = re.compile(r"^([0-9a-fA-F]{1,16})[hH]$")
@@ -402,11 +404,42 @@ def create_server(bridge: Bridge) -> MCPServer:
         max_lines: Annotated[int, Field(ge=1, le=10000, description="Maximum pseudocode lines.")] = 1000,
         database: Database = None,
     ) -> dict[str, Any]:
-        """Hex-Rays pseudocode (C-like) for the function containing `address`. Only works where IDA
-        lets plugins use a decompiler (IDA Home/Educational/Pro); on IDA Free it returns
-        [decompiler_unavailable]. With a cloud decompiler the function is sent to Hex-Rays."""
-        return await call(database, "decompile", timeout_ms=DECOMPILE_TIMEOUT_MS,
-                          address=normalize_address(address), max_lines=max_lines)
+        """Hex-Rays pseudocode (C-like) for the function containing `address`.
+        IDA Home/Educational/Pro: via the decompiler API. IDA Free: via IDA's own F5 action and the
+        Pseudocode window (cloud decompiler); this moves the user's IDA view to the function and
+        opens/reuses a Pseudocode tab. With a cloud decompiler the function is sent to Hex-Rays,
+        and the user must be signed in. `method` in the result says which path was used."""
+        addr = normalize_address(address)
+        try:
+            r = await bridge.call("decompile", {"address": addr, "max_lines": max_lines},
+                                  database=database, timeout_ms=DECOMPILE_TIMEOUT_MS)
+            r["method"] = "decompiler_api"
+            return r
+        except BridgeError as e:
+            if e.code != "decompiler_unavailable":
+                raise ToolError(f"[{e.code}] {e.message}") from e
+        except BridgeUnavailable as e:
+            raise ToolError(str(e)) from e
+        # IDA Free: drive the interactive decompiler (F5) and read the Pseudocode window.
+        # The request is quick; the cloud result is polled so IDA's UI keeps running meanwhile.
+        req = await call(database, "decompile_gui_request", write=True, address=addr)
+        deadline = asyncio.get_running_loop().time() + DECOMPILE_TIMEOUT_MS / 1000
+        while True:
+            r = await call(database, "decompile_gui_read", address=addr, max_lines=max_lines)
+            if r.get("ready"):
+                r.pop("ready", None)
+                r["method"] = "interactive_cloud_decompiler"
+                r["decompiler"] = "Hex-Rays cloud decompiler via IDA's F5 action"
+                r["note"] = ("Read from IDA's Pseudocode window; the function was sent to Hex-Rays' cloud and the "
+                             "user's IDA view was moved to it.")
+                return r
+            if asyncio.get_running_loop().time() >= deadline:
+                raise ToolError(
+                    f"[timeout] no pseudocode for {req['function']['name']} after "
+                    f"{DECOMPILE_TIMEOUT_MS // 1000}s. Check that F5 works in IDA (internet access and a "
+                    "signed-in Hex-Rays account are required for the cloud decompiler)."
+                )
+            await asyncio.sleep(GUI_DECOMPILE_POLL_S)
 
     @mcp.tool(title="Comments", annotations=READ_ONLY)
     async def ida_get_comments(

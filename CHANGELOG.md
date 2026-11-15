@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+
+- `ida_decompile` now returns pseudocode on **IDA Free 9.5** through the cloud decompiler. Its API is
+  not available to plugins on IDA Free, so idamcp runs IDA's own F5 action (`hx:GenPseudo`) and reads
+  the Pseudocode window through the public custom-viewer API. The approach comes from
+  [0xshlomil/ida-free-mcp](https://github.com/0xshlomil/ida-free-mcp) and is implemented
+  independently:
+  - the plugin only requests the decompile, and the server polls for the result, so IDA's UI is
+    never blocked while the cloud answers;
+  - only Pseudocode tabs that idamcp opened are closed; the user's own tabs are left alone;
+  - the declaration line is checked, so a previous function's text is never returned.
+- The result's `method` field is `decompiler_api` (Home/Educational/Pro) or
+  `interactive_cloud_decompiler` (IDA Free).
+- New bridge methods `decompile_gui_request` and `decompile_gui_read`.
+
+### Notes
+
+- On IDA Free the function is sent to Hex-Rays' cloud (internet access and a signed-in account are
+  required, as with F5), and the user's IDA view moves to the function. With several databases ON,
+  the call needs `database`, like a write.
+
 ## 1.1.0
 
 30 new MCP tools (58 total), 6 MCP prompts and 4 MCP resources. Existing tools and

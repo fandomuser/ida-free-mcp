@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -1153,6 +1154,164 @@ Value h_decompile(Call &c)
   return o;
 }
 
+// -------------------------------------------------------------------------
+// GUI decompilation (IDA Free). The cloud decompiler cannot be called through
+// the decompiler API in IDA Free, but its interactive F5 action works. These
+// two handlers use only public UI APIs: `decompile_gui_request` runs IDA's own
+// "hx:GenPseudo" action (exactly what F5 does) on the function, and
+// `decompile_gui_read` reads the text the Pseudocode window displays through
+// the custom-viewer place API. The MCP server polls `decompile_gui_read`, so
+// IDA's event loop keeps running while the asynchronous cloud result arrives.
+// -------------------------------------------------------------------------
+// Pseudocode tabs that idamcp opened (main thread only). Tabs the user had open
+// before a request are never touched; ours are closed before the next request so
+// repeated calls do not pile up "Pseudocode-A..Z" tabs.
+std::set<std::string> g_preexisting_pseudo;
+std::set<std::string> g_our_pseudo;
+
+std::vector<std::string> pseudocode_titles()
+{
+  std::vector<std::string> out;
+  for ( char letter = 'A'; letter <= 'Z'; letter++ )
+  {
+    char title[32];
+    qsnprintf(title, sizeof(title), "Pseudocode-%c", letter);
+    if ( find_widget(title) != nullptr )
+      out.push_back(title);
+  }
+  return out;
+}
+
+Value h_decompile_gui_request(Call &c)
+{
+  func_t *pfn = p_func(c, "address");
+  for ( const auto &t : g_our_pseudo )
+    if ( TWidget *w = find_widget(t.c_str()) )
+      close_widget(w, 0);
+  g_our_pseudo.clear();
+  const std::vector<std::string> before = pseudocode_titles();
+  g_preexisting_pseudo = std::set<std::string>(before.begin(), before.end());
+  if ( TWidget *dv = find_widget("IDA View-A") )
+    activate_widget(dv, true);
+  if ( !jumpto(pfn->start_ea, -1, UIJMP_ACTIVATE) )
+    fail("ida_rejected", "could not navigate the disassembly view to " + hexea(pfn->start_ea));
+  if ( !process_ui_action("hx:GenPseudo") )
+    fail("decompiler_unavailable",
+         "IDA's decompile action (F5) is not available for this database: the cloud decompiler supports "
+         "x86/x64 in IDA Free, and you must be signed in to your Hex-Rays account");
+  msg("[idamcp] requested decompilation of %s (F5)\n", hexea(pfn->start_ea).c_str());
+  Value o = Value::object();
+  o.set("function", func_ref(pfn->start_ea));
+  o.set("requested", true);
+  return o;
+}
+
+// True if `decl` (the pseudocode declaration line) declares function `name`:
+// the name must be followed by '(' and not be part of a longer identifier.
+bool declares_function(const std::string &decl, const std::string &name)
+{
+  if ( name.empty() )
+    return false;
+  size_t pos = 0;
+  while ( (pos = decl.find(name, pos)) != std::string::npos )
+  {
+    const bool left_ok = pos == 0 || !(std::isalnum(static_cast<unsigned char>(decl[pos - 1])) || decl[pos - 1] == '_');
+    size_t after = pos + name.size();
+    while ( after < decl.size() && decl[after] == ' ' )
+      after++;
+    if ( left_ok && after < decl.size() && decl[after] == '(' )
+      return true;
+    pos += name.size();
+  }
+  return false;
+}
+
+Value h_decompile_gui_read(Call &c)
+{
+  func_t *pfn = p_func(c, "address");
+  const int64_t max_lines = p_int(c, "max_lines", 1000, 1, 10000);
+  std::vector<std::string> names;
+  names.push_back(func_name(pfn->start_ea));
+  qstring shortname;
+  if ( get_short_name(&shortname, pfn->start_ea) > 0 )
+  {
+    std::string s = to_std(shortname);
+    const size_t paren = s.find('(');
+    if ( paren != std::string::npos && paren > 0 )
+      s.resize(paren);
+    if ( s != names[0] )
+      names.push_back(s);
+  }
+  constexpr int kMaxRender = 20000;
+  for ( char letter = 'A'; letter <= 'Z'; letter++ )
+  {
+    char title[32];
+    qsnprintf(title, sizeof(title), "Pseudocode-%c", letter);
+    TWidget *w = find_widget(title);
+    if ( w == nullptr )
+      continue;
+    place_t *cur = get_custom_viewer_place(w, false, nullptr, nullptr);
+    if ( cur == nullptr )
+      continue;
+    void *ud = get_viewer_user_data(w);
+    place_t *p = cur->clone();
+    for ( int i = 0; i < kMaxRender && p->prev(ud); i++ )
+      ;
+    std::vector<std::string> lines;
+    for ( int guard = 0; guard < kMaxRender; guard++ )
+    {
+      qstrvec_t out;
+      int deflnnum = 0;
+      color_t pfx = 0;
+      bgcolor_t bg = DEFCOLOR;
+      const int n = p->generate(&out, &deflnnum, &pfx, &bg, ud, 5000);
+      if ( n <= 0 )
+        break;
+      for ( int i = 0; i < n && i < static_cast<int>(out.size()); i++ )
+      {
+        qstring plain;
+        tag_remove(&plain, out[i]);
+        lines.push_back(to_std(plain));
+      }
+      if ( static_cast<int>(lines.size()) >= kMaxRender || !p->next(ud) )
+        break;
+    }
+    qfree(p);
+    // The declaration is the first line that is not blank or a comment.
+    std::string decl;
+    for ( const auto &l : lines )
+    {
+      const size_t s = l.find_first_not_of(" \t");
+      if ( s == std::string::npos || l.compare(s, 2, "//") == 0 )
+        continue;
+      decl = l;
+      break;
+    }
+    bool match = false;
+    for ( const auto &nm : names )
+      match = match || declares_function(decl, nm);
+    if ( !match )
+      continue;
+    if ( g_preexisting_pseudo.count(title) == 0 )
+      g_our_pseudo.insert(title);  // opened by our request: close it before the next one
+    Value arr = Value::array();
+    for ( size_t i = 0; i < lines.size() && static_cast<int64_t>(i) < max_lines; i++ )
+      arr.push(lines[i]);
+    Value o = Value::object();
+    o.set("ready", true);
+    o.set("function", func_ref(pfn->start_ea));
+    o.set("widget", title);
+    o.set("line_count", static_cast<int64_t>(lines.size()));
+    o.set("lines", std::move(arr));
+    o.set("truncated", static_cast<int64_t>(lines.size()) > max_lines);
+    return o;
+  }
+  Value o = Value::object();
+  o.set("ready", false);
+  o.set("function", func_ref(pfn->start_ea));
+  return o;
+}
+
 const MethodDef kMethods[] = {
   {"status", h_status, false},
   {"get_metadata", h_metadata, false},
@@ -1179,6 +1338,9 @@ const MethodDef kMethods[] = {
   {"create_function", h_create_function, true},
   // MFF_WRITE: the decompiler updates database caches/netnodes while it runs.
   {"decompile", h_decompile, true},
+  // GUI path for IDA Free's cloud decompiler (F5 action + read the Pseudocode window).
+  {"decompile_gui_request", h_decompile_gui_request, true},
+  {"decompile_gui_read", h_decompile_gui_read, false},
 };
 
 }  // namespace

@@ -3,8 +3,8 @@
 Lets Claude Code (or any MCP client) inspect the database you have open in
 **IDA Free 9.5** on Windows: functions, disassembly, strings, imports/exports,
 cross-references, call graph, basic blocks/CFG, byte search, names, comments,
-renames, comments and function creation, plus Hex-Rays pseudocode wherever IDA
-allows plugins to use a decompiler (see [Decompiler](#decompiler)).
+renames, comments and function creation, plus Hex-Rays pseudocode, including IDA
+Free's cloud decompiler (see [Decompiler](#decompiler)).
 
 It does not use IDA Pro, IDAPython, idalib, or any license workaround. Nothing in IDA is patched.
 
@@ -164,18 +164,33 @@ never retried automatically.
 
 ### Decompiler
 
-`ida_decompile` uses IDA's official decompiler API (`init_hexrays_plugin`, `decompile_function`).
+`ida_decompile` returns the pseudocode of the containing function as text lines. The result's
+`method` says which of two paths was used:
 
-- **IDA Home, Educational and Pro:** it returns the pseudocode of the containing function, as text
-  lines. With a cloud decompiler (Home/Educational), the function is sent to Hex-Rays' servers.
-- **IDA Free 9.5:** the cloud decompiler works when you press F5 yourself, but Hex-Rays does not let
-  plugins use it. The IDA 9.5 release notes say the cloud decompiler's API is enabled only for "IDA
-  Home, IDA Educational". It was verified on this setup: the API refuses even after a successful F5.
-  The tool then returns `[decompiler_unavailable]` with that explanation. idamcp deliberately does
-  not work around this, for example by calling the decompiler's internals or scraping the
-  Pseudocode window.
-- `ida_status` shows `capabilities.decompiler`, which says whether pseudocode is available in that
-  IDA window. Calls get up to 90 s, because a decompile cannot be interrupted part-way.
+- **`decompiler_api` (IDA Home, Educational and Pro):** IDA's official decompiler API
+  (`init_hexrays_plugin`, `decompile_function`). With a cloud decompiler (Home/Educational), the
+  function is sent to Hex-Rays' servers.
+- **`interactive_cloud_decompiler` (IDA Free 9.5):** IDA Free's cloud decompiler works when you
+  press F5, but its API is not available to plugins (the IDA 9.5 release notes enable it only for
+  "IDA Home, IDA Educational"). idamcp therefore uses the interactive feature as offered: it runs
+  IDA's own F5 action (`hx:GenPseudo`) on the function and reads the text the Pseudocode window
+  shows, through the public custom-viewer API. Nothing is patched and no decompiler internals are
+  called. This approach comes from
+  [0xshlomil/ida-free-mcp](https://github.com/0xshlomil/ida-free-mcp); idamcp implements it
+  independently, with two differences:
+  - the plugin only *requests* the decompile and the server polls for the result every 250 ms, so
+    IDA's UI never sleeps or blocks while the cloud answers;
+  - only Pseudocode tabs that idamcp opened are closed (before its next request); your own tabs
+    are left alone.
+
+  On this path, keep in mind that:
+  - the function is sent to Hex-Rays' cloud, which needs internet access and a signed-in Hex-Rays
+    account (the same as pressing F5);
+  - your IDA view moves to the function, and a Pseudocode tab opens or is reused;
+  - the call is a UI action, so when several databases are ON it needs `database`, like a write.
+- `ida_status` shows `capabilities.decompiler`, which says whether the decompiler *API* is
+  available (false on IDA Free, where the F5 path is used). Calls get up to 90 s, because a
+  decompile cannot be interrupted part-way.
 
 ### Configuration
 
@@ -216,7 +231,8 @@ never retried automatically.
 
 ## Limitations
 
-- **No pseudocode on IDA Free** (see [Decompiler](#decompiler)).
+- **Pseudocode on IDA Free goes through the F5 UI** (see [Decompiler](#decompiler)): it needs a
+  signed-in Hex-Rays account and internet access, and it moves your IDA view.
 - IDA Free has no batch mode, so a person (or the test script) must open the database in the GUI and
   turn MCP on.
 - Results reflect IDA's analysis. For example, `main` is not auto-named in binaries without matching

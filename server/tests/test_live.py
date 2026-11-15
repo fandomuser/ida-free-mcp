@@ -274,14 +274,24 @@ async def test_live_writes(client):
 
 
 async def test_decompile_matches_capability(client):
-    """IDA Free: the cloud decompiler refuses plugin access -> clear error. Home/Pro: pseudocode."""
+    """Home/Pro: pseudocode through the decompiler API. IDA Free: pseudocode through IDA's F5 action
+    (cloud decompiler), read from the Pseudocode window; repeated calls reuse idamcp's own tab."""
     st = await call(client, "ida_status")
     db = next(d for d in st["databases"] if d["database"].lower() == "sample.exe")
-    r = await client.call_tool("ida_decompile", {"address": "idamcp_classify"})
+    r = await call(client, "ida_decompile", {"address": "idamcp_classify"})
+    # Strings appear as literals ("negative") or as IDA names (aNegative), depending on the decompiler.
+    text = "\n".join(r["lines"]).lower()
+    assert "idamcp_classify" in text and "negative" in text and "large" in text
     if db["capabilities"]["decompiler"]:
-        assert not r.is_error, r.content[0].text
-        text = "\n".join(r.structured_content["lines"])
-        assert '"negative"' in text and '"large"' in text
-    else:
-        assert r.is_error and "[decompiler_unavailable]" in r.content[0].text
-        assert "IDA Home" in r.content[0].text
+        assert r["method"] == "decompiler_api"
+        return
+    assert r["method"] == "interactive_cloud_decompiler"
+    assert r["widget"].startswith("Pseudocode-")
+    # A different function must not return the previous function's (stale) text.
+    other = await call(client, "ida_decompile", {"address": "idamcp_checksum"})
+    other_text = "\n".join(other["lines"]).lower()
+    assert "idamcp_checksum" in other_text and "negative" not in other_text
+    # idamcp closes the tab it opened before each request, so tabs do not pile up.
+    again = await call(client, "ida_decompile", {"address": "idamcp_classify"})
+    assert "negative" in "\n".join(again["lines"]).lower()
+    assert other["widget"] == r["widget"] == again["widget"]
